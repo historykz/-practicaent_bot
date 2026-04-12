@@ -11,7 +11,7 @@ from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 
 # --- НАСТРОЙКИ ---
 TOKEN = "8634239927:AAEBAMELMPHeG_1Y1OJ7ZyeBLLr_ITohX08"
-ADMIN_IDS = [123456789]  # ЗАМЕНИ НА СВОЙ ID!
+ADMIN_IDS = [5048547918]  # ЗАМЕНИ НА СВОЙ ID!
 MANAGER_LINK = "@manager_ent"
 
 bot = Bot(token=TOKEN)
