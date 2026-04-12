@@ -476,13 +476,23 @@ def missed_choice_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def collecting_kb() -> InlineKeyboardMarkup:
-    """Кнопки при накоплении вопросов."""
+    """Кнопки при накоплении вопросов (нормальный режим)."""
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="💾 Сохранить тест", callback_data="quiz_buf_save"))
     b.row(
         InlineKeyboardButton(text="🗑 Очистить всё", callback_data="quiz_buf_clear"),
         InlineKeyboardButton(text="❌ Отмена",        callback_data="quiz_buf_cancel")
     )
+    return b.as_markup()
+
+def error_fragment_kb() -> InlineKeyboardMarkup:
+    """Кнопки после ошибки в одном фрагменте."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="🗑 Убрать фрагмент",  callback_data="frag_drop"))
+    b.row(InlineKeyboardButton(text="✏️ Исправить заново", callback_data="frag_retry"))
+    b.row(InlineKeyboardButton(text="➕ Продолжить",        callback_data="frag_continue"))
+    b.row(InlineKeyboardButton(text="💾 Сохранить тест",   callback_data="quiz_buf_save"))
+    b.row(InlineKeyboardButton(text="❌ Отмена",            callback_data="quiz_buf_cancel"))
     return b.as_markup()
 
 # ============================================================
@@ -1394,20 +1404,81 @@ async def adm_collect_poll_direct(message: types.Message, state: FSMContext):
 
 @dp.message(QuizStates.collecting_questions)
 async def adm_collect_text(message: types.Message, state: FSMContext):
-    """Получение текстовых вопросов в буфер."""
+    """Получение текстовых вопросов в буфер с безопасной обработкой ошибок."""
     uid = message.from_user.id
     if uid not in quiz_buffers:
         return
-    quiz_buffers[uid]["parts"].append(message.text)
+
+    raw = message.text or ""
+    parsed, error = parse_quiz_data(raw)
+
+    if error:
+        # Сохраняем плохой фрагмент отдельно — не трогаем накопленные части
+        quiz_buffers[uid]["bad_fragment"] = raw
+
+        # Считаем уже накопленное
+        text_q = sum(count_questions_in_text(p) for p in quiz_buffers[uid]["parts"])
+        poll_q = len(quiz_buffers[uid]["polls"])
+        total  = text_q + poll_q
+
+        # Найдём проблемный блок для показа
+        bad_blocks = raw.strip().split('\n\n')
+        problem_preview = ""
+        for n, block in enumerate(bad_blocks, 1):
+            lines = [l.strip() for l in block.split('\n') if l.strip()]
+            if len(lines) < 3:
+                problem_preview = (
+                    f"\n\n📌 Блок {n} слишком короткий:\n"
+                    f"<code>{block[:120]}</code>"
+                )
+                break
+            opts_found = [l for l in lines[1:] if l.strip()]
+            correct_found = [l for l in opts_found if l.startswith('*')]
+            if len(opts_found) < 2:
+                problem_preview = (
+                    f"\n\n📌 Блок {n} — меньше 2 вариантов:\n"
+                    f"<code>{block[:120]}</code>"
+                )
+                break
+            if len(correct_found) == 0:
+                problem_preview = (
+                    f"\n\n📌 Блок {n} — нет правильного ответа (нужен *):\n"
+                    f"<code>{block[:120]}</code>"
+                )
+                break
+            if len(correct_found) > 1:
+                problem_preview = (
+                    f"\n\n📌 Блок {n} — несколько ответов со *:\n"
+                    f"<code>{block[:120]}</code>"
+                )
+                break
+
+        await message.answer(
+            f"⚠️ <b>Ошибка в фрагменте!</b>\n\n"
+            f"Причина: {error}"
+            f"{problem_preview}\n\n"
+            f"<i>Уже накоплено корректных вопросов: <b>{total}</b></i>\n"
+            f"Этот фрагмент пока <b>не добавлен</b>. Выберите действие:",
+            reply_markup=error_fragment_kb(),
+            parse_mode="HTML"
+        )
+        # Остаёмся в том же состоянии — не меняем FSM
+        return
+
+    # Фрагмент корректный — добавляем
+    quiz_buffers[uid]["parts"].append(raw)
+    quiz_buffers[uid].pop("bad_fragment", None)   # на всякий случай чистим
+
     text_q = sum(count_questions_in_text(p) for p in quiz_buffers[uid]["parts"])
     poll_q = len(quiz_buffers[uid]["polls"])
     total  = text_q + poll_q
+
     await message.answer(
-        f"✅ Часть добавлена!\n\n"
+        f"✅ <b>Фрагмент добавлен!</b>\n\n"
         f"Частей текста: <b>{len(quiz_buffers[uid]['parts'])}</b>\n"
         f"Poll вопросов: <b>{poll_q}</b>\n"
-        f"Предварительно вопросов: <b>{total}</b>\n\n"
-        f"Продолжайте или нажмите «💾 Сохранить тест».",
+        f"Вопросов всего: <b>{total}</b>\n\n"
+        f"Продолжайте добавлять или нажмите «💾 Сохранить тест».",
         reply_markup=collecting_kb(),
         parse_mode="HTML"
     )
@@ -1421,16 +1492,21 @@ async def quiz_buf_save(callback: types.CallbackQuery, state: FSMContext):
     buf   = quiz_buffers[uid]
     title = buf["title"]
 
-    # Собираем вопросы из текстовых частей
-    all_text = "\n\n".join(buf["parts"])
-    text_qs, error = parse_quiz_data(all_text) if all_text.strip() else ([], "")
-    if error:
-        return await callback.message.answer(f"❌ Ошибка в тексте: {error}")
+    # Все части в buf["parts"] уже прошли валидацию при добавлении —
+    # повторно парсим только для сборки финального списка вопросов.
+    all_questions = []
+    for part in buf["parts"]:
+        qs, _ = parse_quiz_data(part)   # ошибок здесь быть не должно
+        all_questions.extend(qs)
 
     # Добавляем poll-вопросы
-    all_questions = text_qs + buf["polls"]
+    all_questions.extend(buf["polls"])
+
     if not all_questions:
-        return await callback.message.answer("❌ Вопросов нет. Добавьте хотя бы один.")
+        return await callback.message.answer(
+            "❌ Вопросов нет. Добавьте хотя бы один корректный фрагмент.",
+            reply_markup=collecting_kb()
+        )
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -1450,11 +1526,12 @@ async def quiz_buf_save(callback: types.CallbackQuery, state: FSMContext):
 async def quiz_buf_clear(callback: types.CallbackQuery):
     uid = callback.from_user.id
     if uid in quiz_buffers:
-        title = quiz_buffers[uid]["title"]
-        quiz_buffers[uid]["parts"] = []
-        quiz_buffers[uid]["polls"] = []
+        quiz_buffers[uid]["parts"]       = []
+        quiz_buffers[uid]["polls"]       = []
+        quiz_buffers[uid].pop("bad_fragment",   None)
+        quiz_buffers[uid].pop("awaiting_retry", None)
     await callback.message.answer(
-        "🗑 Все вопросы очищены. Продолжайте добавлять.",
+        "🗑 Все накопленные вопросы очищены. Продолжайте добавлять.",
         reply_markup=collecting_kb()
     )
 
@@ -1464,6 +1541,75 @@ async def quiz_buf_cancel(callback: types.CallbackQuery, state: FSMContext):
     quiz_buffers.pop(uid, None)
     await state.clear()
     await callback.message.answer("❌ Создание теста отменено.")
+
+# --- ОБРАБОТКА ОШИБОЧНОГО ФРАГМЕНТА ---
+
+@dp.callback_query(F.data == "frag_drop")
+async def frag_drop(callback: types.CallbackQuery):
+    """Убрать ошибочный фрагмент и продолжить без него."""
+    uid = callback.from_user.id
+    if uid not in quiz_buffers:
+        return await callback.answer("Сессия не найдена", show_alert=True)
+
+    quiz_buffers[uid].pop("bad_fragment", None)
+
+    text_q = sum(count_questions_in_text(p) for p in quiz_buffers[uid]["parts"])
+    poll_q = len(quiz_buffers[uid]["polls"])
+    total  = text_q + poll_q
+
+    await callback.message.edit_text(
+        f"🗑 <b>Фрагмент удалён.</b>\n\n"
+        f"Уже накоплено вопросов: <b>{total}</b>\n\n"
+        f"Продолжайте добавлять новые части или сохраните тест.",
+        reply_markup=collecting_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "frag_retry")
+async def frag_retry(callback: types.CallbackQuery, state: FSMContext):
+    """Попросить админа прислать исправленный вариант фрагмента."""
+    uid = callback.from_user.id
+    if uid not in quiz_buffers:
+        return await callback.answer("Сессия не найдена", show_alert=True)
+
+    # Помечаем что ждём исправление — плохой фрагмент уже лежит в bad_fragment
+    quiz_buffers[uid]["awaiting_retry"] = True
+
+    await callback.message.edit_text(
+        "✏️ <b>Отправьте исправленный вариант фрагмента.</b>\n\n"
+        "Формат:\n"
+        "<code>Вопрос?\nA) Вариант\n*B) Правильный\nC) Вариант</code>\n\n"
+        "<i>Блоки разделяй пустой строкой. * перед правильным ответом.</i>",
+        parse_mode="HTML"
+    )
+    # Остаёмся в collecting_questions — следующее текстовое сообщение
+    # будет обработано как новый фрагмент (с валидацией)
+    await state.set_state(QuizStates.collecting_questions)
+    await callback.answer()
+
+@dp.callback_query(F.data == "frag_continue")
+async def frag_continue(callback: types.CallbackQuery):
+    """Продолжить добавлять новые фрагменты, ошибочный остаётся отброшенным."""
+    uid = callback.from_user.id
+    if uid not in quiz_buffers:
+        return await callback.answer("Сессия не найдена", show_alert=True)
+
+    quiz_buffers[uid].pop("bad_fragment", None)
+    quiz_buffers[uid].pop("awaiting_retry", None)
+
+    text_q = sum(count_questions_in_text(p) for p in quiz_buffers[uid]["parts"])
+    poll_q = len(quiz_buffers[uid]["polls"])
+    total  = text_q + poll_q
+
+    await callback.message.edit_text(
+        f"➕ <b>Продолжаем сбор вопросов.</b>\n\n"
+        f"Уже накоплено вопросов: <b>{total}</b>\n\n"
+        f"Отправьте следующую часть теста или нажмите «💾 Сохранить тест».",
+        reply_markup=collecting_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 # --- СПИСОК ТЕСТОВ В АДМИНКЕ ---
 @dp.callback_query(F.data == "adm_list")
