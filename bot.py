@@ -14,8 +14,8 @@ from aiogram.types import (
 
 # --- НАСТРОЙКИ ---
 TOKEN = "ВАШ_ТОКЕН"
-BOT_USERNAME = "practicaent_bot"  # ← без @, только username бота
-ADMIN_IDS = [123456789]
+BOT_USERNAME = "8634239927:AAEBAMELMPHeG_1Y1OJ7ZyeBLLr_ITohX08"  # ← без @, только username бота
+ADMIN_IDS = [5048547918]
 MANAGER_LINK = "@manager_ent"
 
 bot = Bot(token=TOKEN)
