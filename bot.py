@@ -1,157 +1,126 @@
 import asyncio
 import logging
+import aiosqlite
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-# Конфигурация
+# КОНФИГУРАЦИЯ
 TOKEN = "8634239927:AAEBAMELMPHeG_1Y1OJ7ZyeBLLr_ITohX08"
-ADMIN_IDS = [5048547918] 
-MANAGER_USER = "@manager_ent" # Юзернейм менеджера для платных тем
+ADMIN_IDS = [123456789]  # ЗАМЕНИ НА СВОЙ ID (узнай в @userinfobot)
+MANAGER_LINK = "@manager_ent"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Временная БД в памяти
-quizzes = {} # База тестов
-active_sessions = {} # Сессии в группах {chat_id: {"players": set(), "quiz_id": int}}
+class QuizStates(StatesGroup):
+    waiting_for_text = State()
+    waiting_for_edit = State()
 
-class AdminState(StatesGroup):
-    waiting_for_quiz = State()
+# --- РАБОТА С БАЗОЙ ДАННЫХ ---
+async def init_db():
+    async with aiosqlite.connect("quiz_bot.db") as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS quizzes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                data TEXT,
+                is_private INTEGER DEFAULT 0
+            )
+        """)
+        await db.commit()
 
-# --- ФУНКЦИЯ ПАРСИНГА ---
-def parse_quiz_text(text):
+# --- ПАРСЕР ---
+def parse_quiz(text):
     questions = []
     blocks = text.strip().split('\n\n')
     for block in blocks:
-        lines = [line.strip() for line in block.split('\n') if line.strip()]
+        lines = [l.strip() for l in block.split('\n') if l.strip()]
         if len(lines) < 2: continue
-        
-        q_text = lines[0]
-        options = []
-        correct_id = 0
-        for i, opt in enumerate(lines[1:]):
-            if '*' in opt:
-                correct_id = i
-                options.append(opt.replace('*', '').strip())
-            else:
-                options.append(opt.strip())
-        questions.append({"q": q_text, "opts": options, "correct": correct_id})
+        q, opts, corr = lines[0], [], 0
+        for i, o in enumerate(lines[1:]):
+            if '*' in o:
+                corr = i
+                opts.append(o.replace('*', '').strip())
+            else: opts.append(o.strip())
+        questions.append({"q": q, "opts": opts, "correct": corr})
     return questions
 
-# --- ОБРАБОТЧИКИ ---
+# --- ХЕНДЛЕРЫ ---
 
 @dp.message(Command("start"))
-async def start_handler(message: types.Message):
-    user_id = message.from_user.id
-    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
-    
-    text = (f"Здравствуйте, {username}\n"
+async def cmd_start(message: types.Message):
+    # Исправленное приветствие
+    user_name = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+    text = (f"Здравствуйте, {user_name}\n"
             f"Рад приветствовать, что усиленно готовитесь к ЕНТ и желаете практиковаться")
     
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📚 Выберите тему для практики", callback_data="subjects")
-    if user_id in ADMIN_IDS:
-        kb.button(text="⚙️ Создать тест (Админ)", callback_data="admin_add")
-    kb.adjust(1)
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="📚 Выбрать тему для практики", callback_data="menu_subjects"))
+    if message.from_user.id in ADMIN_IDS:
+        builder.row(types.InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_main"))
     
-    await message.answer(text, reply_markup=kb.as_markup())
+    await message.answer(text, reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data == "subjects")
-async def subjects_menu(callback: types.CallbackQuery):
-    kb = InlineKeyboardBuilder()
-    # Если тестов нет
-    if not quizzes:
-        kb.button(text="Пока нет доступных тем", callback_data="none")
-    else:
-        for q_id, q_data in quizzes.items():
-            status = "🔒" if q_data.get('private') else "📖"
-            kb.button(text=f"{status} {q_data['title']}", callback_data=f"info_{q_id}")
+# Меню выбора тем
+@dp.callback_query(F.data == "menu_subjects")
+async def show_quizzes(callback: types.CallbackQuery):
+    async with aiosqlite.connect("quiz_bot.db") as db:
+        async with db.execute("SELECT id, title, is_private FROM quizzes") as cursor:
+            rows = await cursor.fetchall()
     
-    kb.button(text="🔙 Назад", callback_data="start_back")
-    kb.adjust(1)
-    await callback.message.edit_text("Выберите тему для практики:", reply_markup=kb.as_markup())
-
-@dp.callback_query(F.data == "start_back")
-async def back_to_start(callback: types.CallbackQuery):
-    await start_handler(callback.message)
-
-# --- АДМИНКА ---
-@dp.callback_query(F.data == "admin_add")
-async def admin_start(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("Пришли текст теста.\nФормат:\nВопрос?\nА) Ответ*\nБ) Ответ\n\n(Между вопросами пустая строка!)")
-    await state.set_state(AdminState.waiting_for_quiz)
-
-@dp.message(AdminState.waiting_for_quiz)
-async def save_quiz(message: types.Message, state: FSMContext):
-    parsed = parse_quiz_text(message.text)
-    if not parsed:
-        await message.answer("Ошибка формата! Попробуй еще раз.")
-        return
+    builder = InlineKeyboardBuilder()
+    for row in rows:
+        prefix = "🔒" if row[2] else "📖"
+        builder.row(types.InlineKeyboardButton(text=f"{prefix} {row[1]}", callback_data=f"view_{row[0]}"))
     
-    q_id = len(quizzes) + 1
-    quizzes[q_id] = {
-        "title": f"Тест №{q_id}",
-        "questions": parsed,
-        "private": False
-    }
-    await message.answer(f"✅ Готово! Создано вопросов: {len(parsed)}\nID теста: {q_id}")
-    await state.clear()
+    builder.row(types.InlineKeyboardButton(text="🔙 Назад", callback_data="to_start"))
+    await callback.message.edit_text("Выберите тему для практики:", reply_markup=builder.as_markup())
 
-# --- ЛОГИКА QUIZ BOT ---
-@dp.callback_query(F.data.startswith("info_"))
-async def quiz_info(callback: types.CallbackQuery):
+@dp.callback_query(F.data == "to_start")
+async def back_start(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await cmd_start(callback.message)
+
+# Просмотр теста перед запуском
+@dp.callback_query(F.data.startswith("view_"))
+async def view_quiz(callback: types.CallbackQuery):
     q_id = int(callback.data.split("_")[1])
-    quiz = quizzes[q_id]
+    async with aiosqlite.connect("quiz_bot.db") as db:
+        async with db.execute("SELECT title, data, is_private FROM quizzes WHERE id = ?", (q_id,)) as cursor:
+            quiz = await cursor.fetchone()
     
-    if quiz['private']:
-        await callback.message.answer(f"Этот тест платный. Пиши менеджеру: {MANAGER_USER}")
-        return
+    if quiz[2] and callback.from_user.id not in ADMIN_IDS:
+        return await callback.message.answer(f"Тест закрыт. Пишите менеджеру: {MANAGER_LINK}")
 
-    text = (f"📋 Тема: {quiz['title']}\n"
-            f"❓ Вопросов: {len(quiz['questions'])}\n"
-            f"⏱ Время: 30 сек на вопрос\n\n"
-            f"Запускайте в группе, где есть бот!")
+    import json
+    q_count = len(json.loads(quiz[1]))
+    text = f"Тема: {quiz[0]}\nВопросов: {q_count}\nТаймер: 30 сек\n\nГотовы?"
     
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🚀 Запустить тест в этом чате", callback_data=f"lobby_{q_id}")
-    kb.button(text="🔙 Назад", callback_data="subjects")
-    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="🚀 Запустить тест", callback_data=f"run_{q_id}"))
+    builder.row(types.InlineKeyboardButton(text="🔙 Назад", callback_data="menu_subjects"))
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data.startswith("lobby_"))
-async def lobby_logic(callback: types.CallbackQuery):
+# Запуск теста (упрощенная версия для работы и в личке, и в группе)
+@dp.callback_query(F.data.startswith("run_"))
+async def run_quiz(callback: types.CallbackQuery):
     q_id = int(callback.data.split("_")[1])
-    chat_id = callback.message.chat.id
+    async with aiosqlite.connect("quiz_bot.db") as db:
+        async with db.execute("SELECT data FROM quizzes WHERE id = ?", (q_id,)) as cursor:
+            row = await cursor.fetchone()
     
-    if chat_id not in active_sessions:
-        active_sessions[chat_id] = {"players": set(), "quiz_id": q_id, "active": False}
+    import json
+    questions = json.loads(row[0])
     
-    active_sessions[chat_id]["players"].add(callback.from_user.id)
-    count = len(active_sessions[chat_id]["players"])
+    await callback.message.answer("🏁 Тест начинается!")
     
-    kb = InlineKeyboardBuilder()
-    kb.button(text="Я участвую! 🙋‍♂️", callback_data=f"lobby_{q_id}")
-    
-    lobby_msg = (f"🎮 Сбор участников на тест!\n"
-                 f"Присоединилось: {count}\n"
-                 f"Нужно минимум 2 человека.")
-    
-    if count >= 2 and not active_sessions[chat_id]["active"]:
-        active_sessions[chat_id]["active"] = True
-        await callback.message.edit_text("✅ Игроки найдены! Начинаем через 3 секунды...")
-        await asyncio.sleep(3)
-        await run_quiz(chat_id, q_id)
-    else:
-        await callback.message.edit_text(lobby_text=lobby_msg, reply_markup=kb.as_markup())
-
-async def run_quiz(chat_id, q_id):
-    quiz = quizzes[q_id]
-    for i, q in enumerate(quiz['questions']):
-        await bot.send_poll(
-            chat_id=chat_id,
-            question=f"Вопрос {i+1}/{len(quiz['questions'])}: {q['q']}",
+    for i, q in enumerate(questions):
+        poll = await bot.send_poll(
+            chat_id=callback.message.chat.id,
+            question=f"[{i+1}/{len(questions)}] {q['q']}",
             options=q['opts'],
             type='quiz',
             correct_option_id=q['correct'],
@@ -159,12 +128,62 @@ async def run_quiz(chat_id, q_id):
             is_anonymous=False,
             protect_content=True
         )
-        await asyncio.sleep(31) # Ждем таймер + 1 сек
+        await asyncio.sleep(31) # Таймер
+
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="Завершить и выйти", callback_data="menu_subjects"))
+    await callback.message.answer("Тест окончен!", reply_markup=builder.as_markup())
+
+# --- АДМИН-ФУНКЦИИ (УДАЛЕНИЕ/ДОБАВЛЕНИЕ) ---
+
+@dp.callback_query(F.data == "admin_main")
+async def admin_panel(callback: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="➕ Добавить тест", callback_data="adm_add"))
+    builder.row(types.InlineKeyboardButton(text="🗑 Удалить тест", callback_data="adm_del_list"))
+    builder.row(types.InlineKeyboardButton(text="🔙 Назад", callback_data="to_start"))
+    await callback.message.edit_text("Панель администратора:", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "adm_add")
+async def adm_add_start(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Пришли вопросы (Вопрос? \nОтвет1* \nОтвет2)")
+    await state.set_state(QuizStates.waiting_for_text)
+
+@dp.message(QuizStates.waiting_for_text)
+async def adm_save(message: types.Message, state: FSMContext):
+    import json
+    parsed = parse_quiz(message.text)
+    if not parsed: return await message.answer("Ошибка формата!")
     
-    await bot.send_message(chat_id, "🏁 Тест завершен! Проверьте свои результаты выше.")
-    del active_sessions[chat_id]
+    async with aiosqlite.connect("quiz_bot.db") as db:
+        title = parsed[0]['q'][:20] + "..."
+        await db.execute("INSERT INTO quizzes (title, data) VALUES (?, ?)", (title, json.dumps(parsed)))
+        await db.commit()
+    
+    await message.answer("✅ Тест сохранен в базу!")
+    await state.clear()
+
+@dp.callback_query(F.data == "adm_del_list")
+async def adm_del_list(callback: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    async with aiosqlite.connect("quiz_bot.db") as db:
+        async with db.execute("SELECT id, title FROM quizzes") as cursor:
+            async for row in cursor:
+                builder.row(types.InlineKeyboardButton(text=f"❌ {row[1]}", callback_data=f"del_{row[0]}"))
+    builder.row(types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_main"))
+    await callback.message.edit_text("Нажми на тест, чтобы УДАЛИТЬ его:", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("del_"))
+async def adm_delete(callback: types.CallbackQuery):
+    q_id = int(callback.data.split("_")[1])
+    async with aiosqlite.connect("quiz_bot.db") as db:
+        await db.execute("DELETE FROM quizzes WHERE id = ?", (q_id,))
+        await db.commit()
+    await callback.answer("Удалено!")
+    await adm_del_list(callback)
 
 async def main():
+    await init_db()
     logging.basicConfig(level=logging.INFO)
     await dp.start_polling(bot)
 
