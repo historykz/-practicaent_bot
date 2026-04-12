@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 
 # КОНФИГУРАЦИЯ
 TOKEN = "8634239927:AAEBAMELMPHeG_1Y1OJ7ZyeBLLr_ITohX08"
-ADMIN_IDS = [123456789]  # ЗАМЕНИ НА СВОЙ ID (узнай в @userinfobot)
+ADMIN_IDS = [5048547918]  # ЗАМЕНИ НА СВОЙ ID (узнай в @userinfobot)
 MANAGER_LINK = "@manager_ent"
 
 bot = Bot(token=TOKEN)
