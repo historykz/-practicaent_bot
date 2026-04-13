@@ -68,8 +68,20 @@ TEXTS = {
         "kk": "🌐 Выберите язык / Тілді таңдаңыз",
     },
     "welcome": {
-        "ru": "👋 Привет, <b>{name}</b>!\nРад, что ты с нами практикуешься!\n\nЗдесь ты можешь проходить тесты, тренировать знания и улучшать результаты. 🚀",
-        "kk": "👋 Сәлем, <b>{name}</b>!\nБізбен жаттығып жатқаның жақсы!\n\nМұнда сіз тест тапсырып, білімді жетілдіре аласыз. 🚀",
+        "ru": (
+            "👋 Привет, <b>{name}</b>!\n"
+            "Очень рады, что ты с нами 🌟\n\n"
+            "Здесь ты можешь удобно проходить тесты, тренировать знания, "
+            "следить за своим прогрессом и становиться сильнее с каждым днём.\n\n"
+            "Выбирай раздел и начинай практику прямо сейчас 🚀"
+        ),
+        "kk": (
+            "👋 Сәлем, <b>{name}</b>!\n"
+            "Сізді бізбен бірге болғаныңызға қуаныштымыз 🌟\n\n"
+            "Мұнда сіз тест тапсырып, білімді жетілдіріп, "
+            "өз үлгеріміңізді бақылап, күн сайын жақсара аласыз.\n\n"
+            "Бөлімді таңдап, жаттығуды қазір бастаңыз 🚀"
+        ),
     },
     "main_menu": {
         "ru": "🏠 <b>Главное меню</b>\n\nВыберите раздел:",
@@ -153,6 +165,37 @@ TEXTS = {
         "ru": "📚 <b>Разделы</b>\n\nВыберите предмет:",
         "kk": "📚 <b>Бөлімдер</b>\n\nПәнді таңдаңыз:",
     },
+    "btn_settings":    {"ru": "⚙️ Настройки",        "kk": "⚙️ Баптаулар"},
+    "btn_lang":        {"ru": "🌐 Сменить язык",      "kk": "🌐 Тілді өзгерту"},
+    "settings_menu":   {"ru": "⚙️ <b>Настройки</b>",  "kk": "⚙️ <b>Баптаулар</b>"},
+    "lang_changed":    {"ru": "✅ Язык изменён на русский.", "kk": "✅ Тіл қазақ тіліне өзгертілді."},
+    "blocked_msg":     {
+        "ru": "⛔ Ваш доступ к боту ограничен.\nЕсли это ошибка, свяжитесь с администрацией.",
+        "kk": "⛔ Сіздің ботқа қолжетімділігіңіз шектелген.\nЕгер бұл қате болса, әкімшілікпен хабарласыңыз.",
+    },
+    "sec_channel_card": {
+        "ru": "📢 <b>Раздел: {title}</b>\nКанал: {channel}\nПодписка: {status}",
+        "kk": "📢 <b>Бөлім: {title}</b>\nКанал: {channel}\nЖазылым: {status}",
+    },
+    "ch_set_prompt": {
+        "ru": (
+            "Отправьте username канала в формате <code>@channel_name</code>\n\n"
+            "⚠️ Чтобы проверка подписки работала, добавьте бота в канал как администратора."
+        ),
+        "kk": (
+            "Канал username-ін <code>@channel_name</code> форматында жіберіңіз\n\n"
+            "⚠️ Жазылымды тексеру жұмыс істеуі үшін ботты канал әкімшісі ретінде қосыңыз."
+        ),
+    },
+    "ch_saved":        {"ru": "✅ Канал <b>{ch}</b> сохранён для раздела.", "kk": "✅ <b>{ch}</b> каналы бөлім үшін сақталды."},
+    "ch_check_fail":   {
+        "ru": "❌ Не удалось проверить канал.\nУбедитесь что:\n— username указан правильно\n— бот добавлен в канал\n— у бота есть права администратора",
+        "kk": "❌ Каналды тексеру мүмкін болмады.\nКелесіні тексеріңіз:\n— username дұрыс көрсетілген\n— бот канал мүшесі\n— ботта әкімші құқықтары бар",
+    },
+    "ch_no_channel":   {"ru": "❌ Сначала задайте канал для этого раздела.", "kk": "❌ Алдымен осы бөлімге канал тағайындаңыз."},
+    "sub_on":          {"ru": "✅ включена",  "kk": "✅ қосулы"},
+    "sub_off":         {"ru": "❌ выключена", "kk": "❌ өшірулі"},
+    "ch_not_set":      {"ru": "не задан",     "kk": "тағайындалмаған"},
     "help_text": {
         "ru": (
             "ℹ️ <b>Помощь</b>\n\n"
@@ -383,6 +426,13 @@ async def init_db():
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+            CREATE TABLE IF NOT EXISTS blocked_users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                reason TEXT,
+                blocked_at TEXT DEFAULT (datetime('now')),
+                blocked_by INTEGER
+            );
         """)
         await db.commit()
 
@@ -509,6 +559,12 @@ async def _grant_premium_db(db, user_id: int, days: int):
     await db.execute(
         "UPDATE users SET is_premium=1, premium_until=? WHERE user_id=?", (until, user_id)
     )
+
+async def is_blocked(user_id: int) -> bool:
+    """Проверяет, заблокирован ли пользователь."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM blocked_users WHERE user_id=?", (user_id,)) as c:
+            return bool(await c.fetchone())
 
 async def grant_premium(user_id: int, days: int):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -708,11 +764,13 @@ def main_menu_kb(lang: str, is_admin: bool = False) -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text=t("btn_results",  lang),  callback_data="menu_results"))
     b.row(InlineKeyboardButton(text=t("btn_invite",   lang),  callback_data="menu_invite"))
     b.row(
-        InlineKeyboardButton(text=t("btn_help",   lang), callback_data="menu_help"),
-        InlineKeyboardButton(text=t("btn_collab", lang), url=f"https://t.me/{MANAGER_LINK.lstrip('@')}"),
+        InlineKeyboardButton(text=t("btn_help",     lang), callback_data="menu_help"),
+        InlineKeyboardButton(text=t("btn_settings", lang), callback_data="menu_settings"),
     )
-    b.row(InlineKeyboardButton(text=t("btn_manager", lang),
-                                url=f"https://t.me/{MANAGER_LINK.lstrip('@')}"))
+    b.row(
+        InlineKeyboardButton(text=t("btn_collab",  lang), url=f"https://t.me/{MANAGER_LINK.lstrip('@')}"),
+        InlineKeyboardButton(text=t("btn_manager", lang), url=f"https://t.me/{MANAGER_LINK.lstrip('@')}"),
+    )
     if is_admin:
         b.row(InlineKeyboardButton(text=t("btn_admin", lang), callback_data="admin_panel"))
     return b.as_markup()
@@ -775,6 +833,16 @@ async def show_main_menu(target, user_id: int, lang: str, edit: bool = False):
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
+    # Групповой старт обрабатывается отдельным хендлером ниже
+    if message.chat.type in ("group", "supergroup"):
+        return
+
+    # Проверка блокировки
+    if await is_blocked(message.from_user.id):
+        lang = await get_user_lang(message.from_user.id)
+        await message.answer(t("blocked_msg", lang))
+        return
+
     args = message.text.split()
     invited_by = None
 
@@ -806,19 +874,38 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await message.answer(t("welcome", lang, name=name), parse_mode="HTML")
     await show_main_menu(message, message.from_user.id, lang)
 
-@dp.callback_query(F.data.startswith("lang_"))
-async def choose_lang(callback: types.CallbackQuery, state: FSMContext):
-    lang = callback.data.split("_")[1]
-    await set_user_lang(callback.from_user.id, lang)
-    await state.clear()
-    name = f"@{callback.from_user.username}" if callback.from_user.username else callback.from_user.first_name
-    await callback.message.edit_text(t("welcome", lang, name=name), parse_mode="HTML")
-    await show_main_menu(callback.message, callback.from_user.id, lang)
+# choose_lang is handled by choose_lang_universal above
 
 @dp.callback_query(F.data == "to_main")
 async def to_main(callback: types.CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
     await show_main_menu(callback, callback.from_user.id, lang, edit=True)
+
+# ──────────────────────────────────────────────────────────────────────────
+# НАСТРОЙКИ — смена языка в любой момент
+# ──────────────────────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "menu_settings")
+async def menu_settings(callback: types.CallbackQuery):
+    lang = await get_user_lang(callback.from_user.id)
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text=t("btn_lang", lang), callback_data="change_lang"))
+    b.row(InlineKeyboardButton(text=t("btn_back", lang), callback_data="to_main"))
+    await callback.message.edit_text(t("settings_menu", lang),
+                                      reply_markup=b.as_markup(), parse_mode="HTML")
+
+@dp.callback_query(F.data == "change_lang")
+async def change_lang_menu(callback: types.CallbackQuery):
+    await callback.message.edit_text(t("choose_lang", "ru"), reply_markup=lang_kb())
+
+# Повторный выбор языка (не только при первом старте)
+@dp.callback_query(F.data.in_({"lang_ru", "lang_kk"}))
+async def choose_lang_universal(callback: types.CallbackQuery, state: FSMContext):
+    lang = callback.data.split("_")[1]
+    await set_user_lang(callback.from_user.id, lang)
+    await state.clear()  # сбросить если был LangStates
+    name = f"@{callback.from_user.username}" if callback.from_user.username else callback.from_user.first_name
+    await callback.message.edit_text(t("welcome", lang, name=name), parse_mode="HTML")
+    await show_main_menu(callback.message, callback.from_user.id, lang)
 
 
 # ============================================================
@@ -1144,6 +1231,8 @@ async def menu_results(callback: types.CallbackQuery):
 async def start_quiz_cb(callback: types.CallbackQuery):
     uid  = callback.from_user.id
     lang = await get_user_lang(uid)
+    if await is_blocked(uid):
+        return await callback.answer(t("blocked_msg", lang), show_alert=True)
     q_id = int(callback.data.split("_")[1])
     row  = await get_quiz(q_id)
     if not row:
@@ -1595,13 +1684,19 @@ async def inline_handler(query: types.InlineQuery):
 
 # ============================================================
 # ГРУППОВОЙ РЕЖИМ
+# Сценарий A: Публикация карточки теста в группу (из инлайна)
+# Сценарий B: Участие в уже опубликованном тесте (кнопка в группе)
 # ============================================================
+
 @dp.message(Command("start"))
 async def group_quiz_start(message: types.Message):
-    """Обрабатывает /start gquiz_ID в группе."""
+    """
+    Срабатывает когда бот добавлен в группу и кто-то пишет /start gquiz_ID.
+    Публикует карточку группового теста.
+    """
     if message.chat.type not in ("group", "supergroup"):
         return
-    args = message.text.split()
+    args = message.text.split() if message.text else []
     if len(args) < 2 or not args[1].startswith("gquiz_"):
         return
     try:
@@ -1616,88 +1711,170 @@ async def group_quiz_start(message: types.Message):
         await message.answer("🔒 Только бесплатные тесты можно запускать в группах.")
         return
 
-    if chat_id not in group_sessions:
-        group_sessions[chat_id] = {
-            "quiz_id": q_id, "players": [], "started": False,
-            "created_by": uid, "title": row[2]
-        }
-        b = InlineKeyboardBuilder()
-        b.row(InlineKeyboardButton(text="▶️ Пройти тест", callback_data=f"gjoin_{q_id}"))
-        questions = json.loads(row[3])
-        await message.answer(
-            f"🎲 Тест <b>«{row[2]}»</b>\n📝 {len(questions)} вопросов · ⏱ {QUESTION_TIMEOUT} сек\n\n"
-            f"Нажмите «▶️ Пройти тест» чтобы участвовать!\n"
-            f"Тест стартует, когда готовы минимум {GROUP_MIN_PLAYERS} участника.",
-            reply_markup=b.as_markup(), parse_mode="HTML"
-        )
-    else:
-        await message.answer("Тест уже запущен в этом чате.")
+    # Если сессия уже активна для этого чата и этого теста — не дублируем
+    gs = group_sessions.get(chat_id)
+    if gs and gs["quiz_id"] == q_id and not gs["finished"]:
+        await message.answer("⚠️ Этот тест уже опубликован в чате. Нажмите «▶️ Пройти тест» в карточке выше.")
+        return
+
+    questions = clean_quiz_data(json.loads(row[3]))
+
+    # Создаём новую групповую сессию
+    group_sessions[chat_id] = {
+        "quiz_id":      q_id,
+        "quiz_title":   row[2],
+        "players":      [],
+        "started":      False,
+        "finished":     False,
+        "created_by":   uid,
+        "questions":    questions,
+        "card_msg_id":  None,   # id карточки — обновляем счётчик участников
+    }
+
+    b = InlineKeyboardBuilder()
+    # Эта кнопка — только участие, НЕ публикация заново
+    b.row(InlineKeyboardButton(text="▶️ Пройти тест", callback_data=f"gjoin_{chat_id}"))
+    b.row(InlineKeyboardButton(text="🚀 Начать!",      callback_data=f"gstart_{chat_id}"))
+
+    card = await message.answer(
+        f"🎲 <b>Тест «{row[2]}»</b>\n"
+        f"📝 {len(questions)} вопросов · ⏱ {QUESTION_TIMEOUT} сек\n\n"
+        f"👇 Нажмите «▶️ Пройти тест» чтобы записаться!\n"
+        f"👥 Готовы: <b>0</b> из {GROUP_MIN_PLAYERS} минимум\n\n"
+        f"Когда наберётся {GROUP_MIN_PLAYERS} участника, нажмите «🚀 Начать!»",
+        reply_markup=b.as_markup(), parse_mode="HTML"
+    )
+    group_sessions[chat_id]["card_msg_id"] = card.message_id
 
 @dp.callback_query(F.data.startswith("gjoin_"))
 async def group_join(callback: types.CallbackQuery):
+    """Пользователь записывается в групповой тест. НЕ открывает выбор чатов."""
     chat_id = callback.message.chat.id
     uid     = callback.from_user.id
-    q_id    = int(callback.data.split("_")[1])
-    gs      = group_sessions.get(chat_id)
 
-    if not gs or gs["started"]:
+    # Извлекаем chat_id из callback_data
+    try:
+        target_chat_id = int(callback.data.split("_")[1])
+    except (IndexError, ValueError):
+        target_chat_id = chat_id
+
+    gs = group_sessions.get(target_chat_id) or group_sessions.get(chat_id)
+    if not gs:
+        return await callback.answer("Сессия не найдена. Попросите создателя заново опубликовать тест.", show_alert=True)
+    if gs["started"]:
         return await callback.answer("Тест уже начался.", show_alert=True)
+    if gs["finished"]:
+        return await callback.answer("Тест уже завершён.", show_alert=True)
     if uid in gs["players"]:
-        return await callback.answer("Вы уже в списке участников.", show_alert=True)
+        return await callback.answer("Вы уже в списке участников! ✅", show_alert=True)
 
     gs["players"].append(uid)
     cnt  = len(gs["players"])
     name = callback.from_user.first_name or str(uid)
-    await callback.answer(f"✅ {name} готов!")
+    await callback.answer(f"✅ {name} записан! Участников: {cnt}")
 
-    if cnt >= GROUP_MIN_PLAYERS:
+    # Обновляем карточку — меняем счётчик
+    actual_chat = target_chat_id if target_chat_id in group_sessions else chat_id
+    try:
+        q_len = len(gs["questions"])
         b = InlineKeyboardBuilder()
-        b.row(InlineKeyboardButton(text="🚀 Начать тест!",
-                                    callback_data=f"gstart_{chat_id}_{q_id}"))
-        try:
-            await callback.message.edit_reply_markup(reply_markup=b.as_markup())
-        except Exception:
-            pass
-        await callback.message.answer(
-            f"👥 Участников: <b>{cnt}</b>. Можно начинать!",
-            parse_mode="HTML"
+        b.row(InlineKeyboardButton(text="▶️ Пройти тест", callback_data=f"gjoin_{actual_chat}"))
+        if cnt >= GROUP_MIN_PLAYERS:
+            b.row(InlineKeyboardButton(text=f"🚀 Начать! ({cnt} чел.)", callback_data=f"gstart_{actual_chat}"))
+        else:
+            b.row(InlineKeyboardButton(text=f"⏳ Нужно ещё {GROUP_MIN_PLAYERS - cnt} чел.", callback_data="noop"))
+
+        await callback.message.edit_text(
+            f"🎲 <b>Тест «{gs['quiz_title']}»</b>\n"
+            f"📝 {q_len} вопросов · ⏱ {QUESTION_TIMEOUT} сек\n\n"
+            f"👇 Нажмите «▶️ Пройти тест» чтобы записаться!\n"
+            f"👥 Готовы: <b>{cnt}</b> из {GROUP_MIN_PLAYERS} минимум",
+            reply_markup=b.as_markup(), parse_mode="HTML"
         )
+    except Exception:
+        pass
+
+@dp.callback_query(F.data == "noop")
+async def noop(callback: types.CallbackQuery):
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("gstart_"))
 async def group_start(callback: types.CallbackQuery):
-    parts   = callback.data.split("_")
-    chat_id = int(parts[1])
-    q_id    = int(parts[2])
-    uid     = callback.from_user.id
-    gs      = group_sessions.get(chat_id)
+    """Запускает групповой тест — только создатель или админ."""
+    uid = callback.from_user.id
+    try:
+        target_chat_id = int(callback.data.split("_")[1])
+    except (IndexError, ValueError):
+        target_chat_id = callback.message.chat.id
 
+    gs = group_sessions.get(target_chat_id)
     if not gs:
         return await callback.answer("Сессия не найдена", show_alert=True)
-    # Только создатель или админ может старт
-    if uid != gs.get("created_by") and uid not in SUPER_ADMIN_IDS:
-        return await callback.answer("Только создатель теста может его запустить", show_alert=True)
     if gs["started"]:
-        return await callback.answer("Уже запущен", show_alert=True)
+        return await callback.answer("Тест уже запущен", show_alert=True)
+    if gs["finished"]:
+        return await callback.answer("Тест завершён", show_alert=True)
+
+    # Проверка прав: создатель или супер-админ или chat-admin
+    if uid != gs["created_by"] and uid not in SUPER_ADMIN_IDS:
+        try:
+            member = await bot.get_chat_member(target_chat_id, uid)
+            if member.status not in ("administrator", "creator"):
+                return await callback.answer(
+                    "Только создатель теста или администратор чата могут начать тест.",
+                    show_alert=True
+                )
+        except Exception:
+            return await callback.answer("Нет доступа для запуска", show_alert=True)
+
+    if len(gs["players"]) < GROUP_MIN_PLAYERS:
+        return await callback.answer(
+            f"Нужно минимум {GROUP_MIN_PLAYERS} участника. Сейчас: {len(gs['players'])}",
+            show_alert=True
+        )
 
     gs["started"] = True
-    row       = await get_quiz(q_id)
-    questions = clean_quiz_data(json.loads(row[3]))
+    await callback.answer("🚀 Запускаем!")
 
-    for count in ["3", "2", "1", "🚀 Старт!"]:
-        await bot.send_message(chat_id, count)
+    # Убираем кнопки с карточки
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    # Запускаем в asyncio.Task, чтобы не блокировать
+    asyncio.create_task(run_group_quiz(target_chat_id, gs))
+
+async def run_group_quiz(chat_id: int, gs: dict):
+    """Фактический запуск группового теста с отсчётом и poll-ами."""
+    questions = gs["questions"]
+
+    # Отсчёт
+    for count in ("3️⃣", "2️⃣", "1️⃣", "🚀 <b>Старт!</b>"):
+        try:
+            await bot.send_message(chat_id, count, parse_mode="HTML")
+        except Exception:
+            pass
         await asyncio.sleep(1)
 
     await bot.send_message(
         chat_id,
-        f"🚀 <b>Тест «{row[2]}»</b>\n👥 Участников: {len(gs['players'])}\n📝 {len(questions)} вопросов",
+        f"🎮 <b>Тест «{gs['quiz_title']}»</b> начинается!\n"
+        f"👥 Участников: {len(gs['players'])}\n"
+        f"📝 {len(questions)} вопросов · ⏱ {QUESTION_TIMEOUT} сек\n\n"
+        f"<i>Для завершения нажмите ⛔ кнопку под вопросом (только создатель/админ)</i>",
         parse_mode="HTML"
     )
 
     for i, q in enumerate(questions):
-        # Проверяем что сессия не завершена
-        if not group_sessions.get(chat_id, {}).get("started"):
+        # Проверяем что тест не завершён досрочно
+        if group_sessions.get(chat_id, {}).get("finished"):
             break
+
         opts = [clean_option(o) for o in q['opts']]
+        b    = InlineKeyboardBuilder()
+        b.row(InlineKeyboardButton(text="⛔ Завершить тест", callback_data=f"gstop_{chat_id}"))
+
         try:
             await bot.send_poll(
                 chat_id=chat_id,
@@ -1708,13 +1885,52 @@ async def group_start(callback: types.CallbackQuery):
                 open_period=QUESTION_TIMEOUT,
                 is_anonymous=False
             )
+            # Кнопка завершения отдельным сообщением
+            await bot.send_message(chat_id, "⏱", reply_markup=b.as_markup())
         except Exception as e:
             logger.error(f"Групповой poll: {e}")
-        await asyncio.sleep(QUESTION_TIMEOUT + 2)
 
-    await bot.send_message(chat_id, "🏁 Групповой тест завершён! Спасибо всем участникам.")
+        await asyncio.sleep(QUESTION_TIMEOUT + 1)
+
+    gs["finished"] = True
     group_sessions.pop(chat_id, None)
-    await callback.answer()
+    try:
+        await bot.send_message(chat_id, "🏁 <b>Групповой тест завершён!</b>\nСпасибо всем участникам! 🎉",
+                               parse_mode="HTML")
+    except Exception:
+        pass
+
+@dp.callback_query(F.data.startswith("gstop_"))
+async def group_stop(callback: types.CallbackQuery):
+    """Досрочное завершение группового теста — только создатель/админ."""
+    uid = callback.from_user.id
+    try:
+        target_chat_id = int(callback.data.split("_")[1])
+    except (IndexError, ValueError):
+        target_chat_id = callback.message.chat.id
+
+    gs = group_sessions.get(target_chat_id)
+    if not gs:
+        return await callback.answer("Сессия не найдена", show_alert=True)
+
+    if uid != gs["created_by"] and uid not in SUPER_ADMIN_IDS:
+        try:
+            member = await bot.get_chat_member(target_chat_id, uid)
+            if member.status not in ("administrator", "creator"):
+                return await callback.answer("Только создатель или администратор чата.", show_alert=True)
+        except Exception:
+            return await callback.answer("Нет доступа", show_alert=True)
+
+    gs["finished"] = True
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.answer("⛔ Тест остановлен")
+    try:
+        await bot.send_message(target_chat_id, "⛔ <b>Тест остановлен досрочно.</b>", parse_mode="HTML")
+    except Exception:
+        pass
 
 # ============================================================
 # ГЛАВНАЯ АДМИН-ПАНЕЛЬ
@@ -1744,6 +1960,7 @@ async def admin_panel(callback: types.CallbackQuery):
         InlineKeyboardButton(text="📊 Статистика", callback_data="adm_stats"),
         InlineKeyboardButton(text="⚖️ Апелляции",  callback_data="adm_appeals"),
     )
+    b.row(InlineKeyboardButton(text="🚫 Блокировка",          callback_data="adm_block_menu"))
     b.row(InlineKeyboardButton(text="🔙 Назад", callback_data="to_main"))
 
     await callback.message.edit_text("⚙️ <b>Админ-панель</b>",
@@ -1817,72 +2034,145 @@ async def adm_sec_channels(callback: types.CallbackQuery):
     if not sections:
         return await callback.answer("Разделов нет", show_alert=True)
     b = InlineKeyboardBuilder()
-    for s_id, ru, _, req, ch in sections:
+    for s_id, ru, kk, req, ch in sections:
         status = "✅" if req else "❌"
         ch_str = f" ({ch})" if ch else ""
         b.row(InlineKeyboardButton(text=f"{status} {ru}{ch_str}",
-                                    callback_data=f"sec_ch_{s_id}"))
+                                    callback_data=f"sec_ch_set_view_{s_id}"))
     b.row(InlineKeyboardButton(text="🔙 Назад", callback_data="adm_sections"))
     await callback.message.edit_text("📢 <b>Каналы подписки по разделам</b>\n\n✅ — включено | ❌ — выключено",
                                       reply_markup=b.as_markup(), parse_mode="HTML")
 
-@dp.callback_query(F.data.startswith("sec_ch_"))
-async def sec_ch_manage(callback: types.CallbackQuery):
-    s_id = int(callback.data.split("_")[2])
-    sec  = await get_section(s_id)
+@dp.callback_query(F.data.startswith("sec_ch_set_view_"))
+async def sec_ch_set_view(callback: types.CallbackQuery):
+    s_id = int(callback.data.split("_")[4])
+    lang = await get_user_lang(callback.from_user.id)
+    await _show_section_channel_card(callback, s_id, lang)
+
+async def _show_section_channel_card(callback_or_msg, s_id: int, lang: str = "ru", edit: bool = True):
+    """Показывает карточку настроек канала раздела."""
+    sec = await get_section(s_id)
     if not sec:
         return
-    _, ru, _, req, ch = sec
+    _, title_ru, title_kk, req, ch = sec
+    title = title_kk if lang == "kk" else title_ru
+
+    ch_display = f"<code>{ch}</code>" if ch else t("ch_not_set", lang)
+    status     = t("sub_on", lang) if req else t("sub_off", lang)
+
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="✏️ Задать канал",        callback_data=f"sec_ch_set_{s_id}"))
+    b.row(InlineKeyboardButton(
+        text="✏️ Задать канал" if lang == "ru" else "✏️ Каналды тағайындау",
+        callback_data=f"sec_ch_set_{s_id}"
+    ))
     if req:
-        b.row(InlineKeyboardButton(text="❌ Выключить подписку", callback_data=f"sec_ch_off_{s_id}"))
+        b.row(InlineKeyboardButton(
+            text="❌ Выключить подписку" if lang == "ru" else "❌ Жазылымды өшіру",
+            callback_data=f"sec_ch_off_{s_id}"
+        ))
     else:
-        b.row(InlineKeyboardButton(text="✅ Включить подписку",  callback_data=f"sec_ch_on_{s_id}"))
-    b.row(InlineKeyboardButton(text="🔙 Назад", callback_data="adm_sec_channels"))
-    await callback.message.edit_text(
-        f"📢 Раздел: <b>{ru}</b>\nКанал: <code>{ch or 'не задан'}</code>\n"
-        f"Подписка: {'✅ включена' if req else '❌ выключена'}",
-        reply_markup=b.as_markup(), parse_mode="HTML"
-    )
+        b.row(InlineKeyboardButton(
+            text="✅ Включить подписку" if lang == "ru" else "✅ Жазылымды қосу",
+            callback_data=f"sec_ch_on_{s_id}"
+        ))
+    b.row(InlineKeyboardButton(
+        text=t("btn_back", lang), callback_data="adm_sec_channels"
+    ))
+
+    text = t("sec_channel_card", lang, title=title, channel=ch_display, status=status)
+    if ch:
+        text += f"\n\n⚠️ {'Убедитесь что бот добавлен в канал как администратор.' if lang == 'ru' else 'Ботты канал әкімшісі ретінде қосқаныңызды тексеріңіз.'}"
+
+    if edit and hasattr(callback_or_msg, 'message'):
+        await callback_or_msg.message.edit_text(text, reply_markup=b.as_markup(), parse_mode="HTML")
+    else:
+        msg = callback_or_msg.message if hasattr(callback_or_msg, 'message') else callback_or_msg
+        await msg.answer(text, reply_markup=b.as_markup(), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("sec_ch_"))
+async def sec_ch_manage(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    # sec_ch_set_ID, sec_ch_on_ID, sec_ch_off_ID → len>=4
+    # sec_ch_ID → only 3 parts
+    if len(parts) < 3:
+        return
+    action = parts[2]  # set / on / off / (numeric = view)
+    # If action is numeric it means direct view: sec_ch_{s_id}
+    try:
+        if action.isdigit():
+            s_id = int(action)
+            lang = await get_user_lang(callback.from_user.id)
+            await _show_section_channel_card(callback, s_id, lang)
+            return
+    except Exception:
+        pass
+    return  # sub-actions handled below
 
 @dp.callback_query(F.data.startswith("sec_ch_set_"))
 async def sec_ch_set(callback: types.CallbackQuery, state: FSMContext):
     s_id = int(callback.data.split("_")[3])
-    await state.update_data(section_id=s_id)
-    await callback.message.answer("Введите @username канала:")
+    lang = await get_user_lang(callback.from_user.id)
+    await state.update_data(section_id=s_id, admin_lang=lang)
+    await callback.message.answer(t("ch_set_prompt", lang), parse_mode="HTML")
     await state.set_state(AdminStates.channel_username)
+    await callback.answer()
 
 @dp.message(AdminStates.channel_username)
 async def save_section_channel(message: types.Message, state: FSMContext):
     d    = await state.get_data()
     s_id = d["section_id"]
-    ch   = message.text.strip()
-    if not ch.startswith("@"):
-        ch = "@" + ch
+    lang = d.get("admin_lang", "ru")
+    raw  = (message.text or "").strip()
+    ch   = raw if raw.startswith("@") else ("@" + raw)
+
+    # Проверяем доступность канала через Telegram API
+    try:
+        chat_info = await bot.get_chat(ch)
+        # Пробуем get_chat_member для проверки прав бота
+        try:
+            bot_member = await bot.get_chat_member(ch, bot.id)
+            if bot_member.status not in ("administrator", "creator"):
+                await message.answer(t("ch_check_fail", lang), parse_mode="HTML")
+                return
+        except Exception:
+            # Не смогли проверить права — сохраняем с предупреждением
+            pass
+    except Exception:
+        await message.answer(t("ch_check_fail", lang), parse_mode="HTML")
+        return
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE sections SET required_channel_username=? WHERE id=?", (ch, s_id))
         await db.commit()
-    await message.answer(f"✅ Канал <b>{ch}</b> установлен для раздела.", parse_mode="HTML")
+
+    await message.answer(t("ch_saved", lang, ch=ch), parse_mode="HTML")
     await state.clear()
+    # Показываем обновлённую карточку
+    await _show_section_channel_card(message, s_id, lang, edit=False)
 
 @dp.callback_query(F.data.startswith("sec_ch_on_"))
 async def sec_ch_on(callback: types.CallbackQuery):
     s_id = int(callback.data.split("_")[3])
+    lang = await get_user_lang(callback.from_user.id)
+    # Проверяем что канал задан
+    sec  = await get_section(s_id)
+    if not sec or not sec[4]:
+        return await callback.answer(t("ch_no_channel", lang), show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE sections SET require_subscription=1 WHERE id=?", (s_id,))
         await db.commit()
-    await callback.answer("✅ Подписка включена", show_alert=True)
-    await adm_sec_channels(callback)
+    await callback.answer(t("sub_on", lang), show_alert=True)
+    await _show_section_channel_card(callback, s_id, lang)
 
 @dp.callback_query(F.data.startswith("sec_ch_off_"))
 async def sec_ch_off(callback: types.CallbackQuery):
     s_id = int(callback.data.split("_")[3])
+    lang = await get_user_lang(callback.from_user.id)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE sections SET require_subscription=0 WHERE id=?", (s_id,))
         await db.commit()
-    await callback.answer("❌ Подписка выключена", show_alert=True)
-    await adm_sec_channels(callback)
+    await callback.answer(t("sub_off", lang), show_alert=True)
+    await _show_section_channel_card(callback, s_id, lang)
 
 
 # ============================================================
@@ -2520,6 +2810,56 @@ async def confirm_del_res(callback: types.CallbackQuery):
 
 
 # ============================================================
+# БЛОКИРОВКА ПОЛЬЗОВАТЕЛЕЙ
+# ============================================================
+@dp.callback_query(F.data == "adm_block_menu")
+async def adm_block_menu(callback: types.CallbackQuery):
+    if not await is_any_admin(callback.from_user.id):
+        return
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="🚫 Заблокировать",     callback_data="block_user"))
+    b.row(InlineKeyboardButton(text="✅ Разблокировать",    callback_data="unblock_user"))
+    b.row(InlineKeyboardButton(text="📋 Список заблокир.", callback_data="blocked_list"))
+    b.row(InlineKeyboardButton(text="🔙 Назад",            callback_data="admin_panel"))
+    await callback.message.edit_text("🚫 <b>Блокировка пользователей</b>",
+                                      reply_markup=b.as_markup(), parse_mode="HTML")
+
+@dp.callback_query(F.data == "block_user")
+async def block_user_start(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "Введите <b>user_id</b> или <b>@username</b> пользователя для блокировки\n\n"
+        "Формат: <code>123456789</code> или <code>@username</code>\n\n"
+        "Дополнительно можно добавить причину через пробел:",
+        parse_mode="HTML"
+    )
+    await state.update_data(block_action="block")
+    await state.set_state(AdminStates.premium_uid)  # reuse state
+
+@dp.callback_query(F.data == "unblock_user")
+async def unblock_user_start(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите <b>user_id</b> для разблокировки:", parse_mode="HTML")
+    await state.update_data(block_action="unblock")
+    await state.set_state(AdminStates.premium_uid)
+
+@dp.callback_query(F.data == "blocked_list")
+async def blocked_list(callback: types.CallbackQuery):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, username, reason, blocked_at FROM blocked_users ORDER BY blocked_at DESC LIMIT 30"
+        ) as c:
+            rows = await c.fetchall()
+    if not rows:
+        return await callback.answer("Заблокированных нет", show_alert=True)
+    text = "🚫 <b>Заблокированные пользователи:</b>\n\n"
+    for uid, uname, reason, dt in rows:
+        ustr   = f"@{uname}" if uname else str(uid)
+        reason = reason or "—"
+        text  += f"• {ustr} [{dt[:10]}] — {reason}\n"
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="🔙 Назад", callback_data="adm_block_menu"))
+    await callback.message.edit_text(text, reply_markup=b.as_markup(), parse_mode="HTML")
+
+# ============================================================
 # ВЫДАТЬ ПРЕМИУМ
 # ============================================================
 @dp.callback_query(F.data == "adm_premium")
@@ -2531,8 +2871,67 @@ async def adm_premium(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(AdminStates.premium_uid)
 async def prem_uid(message: types.Message, state: FSMContext):
+    d = await state.get_data()
+    block_action = d.get("block_action")
+
+    raw = (message.text or "").strip()
+
+    if block_action == "block":
+        parts  = raw.split(None, 1)
+        target = parts[0]
+        reason = parts[1] if len(parts) > 1 else ""
+        # Resolve username to user_id if needed
+        uid = None
+        if target.startswith("@"):
+            # Look up in our users table
+            async with aiosqlite.connect(DB_PATH) as db:
+                async with db.execute("SELECT user_id FROM users WHERE username=?",
+                                       (target.lstrip("@"),)) as c:
+                    row = await c.fetchone()
+            if row:
+                uid = row[0]
+            else:
+                await message.answer("❌ Пользователь с таким username не найден в базе.")
+                await state.clear()
+                return
+        else:
+            try:
+                uid = int(target)
+            except ValueError:
+                await message.answer("❌ Введите числовой ID или @username")
+                return
+
+        uname = target.lstrip("@") if target.startswith("@") else None
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO blocked_users (user_id,username,reason,blocked_by) VALUES(?,?,?,?)",
+                (uid, uname, reason, message.from_user.id)
+            )
+            await db.commit()
+        await message.answer(f"🚫 Пользователь {uid} заблокирован.")
+        try:
+            await bot.send_message(uid, "⛔ Ваш доступ к боту ограничен.\nЕсли это ошибка, свяжитесь с администрацией.")
+        except Exception:
+            pass
+        await state.clear()
+        return
+
+    if block_action == "unblock":
+        try:
+            uid = int(raw)
+        except ValueError:
+            await message.answer("❌ Введите числовой ID")
+            return
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("DELETE FROM blocked_users WHERE user_id=?", (uid,))
+            await db.commit()
+        await message.answer(f"✅ Пользователь {uid} разблокирован.")
+        await state.clear()
+        return
+
+    # Default: premium
     try:
-        await state.update_data(target_uid=int(message.text.strip()))
+        await state.update_data(target_uid=int(raw))
         await message.answer("📅 На сколько <b>дней</b>?", parse_mode="HTML")
         await state.set_state(AdminStates.premium_days)
     except ValueError:
